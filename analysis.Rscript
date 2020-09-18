@@ -1,0 +1,662 @@
+# /mnt/4tb1/11_Vero/OXA48
+
+library(ape)
+
+source('../../3_Leptospira/flagellar_genes/plotTree.R')
+
+tre  <- read.tree('st15_final_tree.tre')
+kle  <- readRDS('kleborate_ST15.rds')
+tab  <- read.table('kp_public_PATRIC.csv',sep=',',header=T,colClasses='character')
+
+labs <- tre$tip.label
+
+kle2 <- kle[which(as.vector(kle$strain)%in%labs),]
+tab2 <- tab[which(as.vector(tab$Genome.ID)%in%labs),]
+tab3 <- tab2[,c(1,37,38,39)]
+
+kle3 <- kle2[,c(1,6,17)]
+
+carb <- as.vector(kle2$Bla_Carb)
+
+ndms <- rep(0,length(carb))
+kpcs <- rep(0,length(carb))
+vims <- rep(0,length(carb))
+ox48 <- rep(0,length(carb))
+othr <- rep(0,length(carb))
+ctxm <- rep(0,length(carb))
+
+gndm <- grep('NDM',carb)
+gkpc <- grep('KPC',carb)
+gvim <- grep('VIM',carb)
+goxa <- grep('OXA-48',carb)
+gctx <- grep('CTX-M-15',as.vector(kle2$Bla_ESBL))
+
+sl    <- unique(c(gndm,gkpc,gvim,goxa))
+wh    <- which(nchar(carb)!=1)
+other <- setdiff(wh,sl)
+
+ndms[gndm]  <- 1
+kpcs[gkpc]  <- 1
+vims[gvim]  <- 1
+ox48[goxa]  <- 1
+othr[other] <- 1
+ctxm[gctx]  <- 1 
+
+kle3$'OXA-48'   <- ox48
+kle3$KPCs       <- kpcs
+kle3$NDMs       <- ndms
+kle3$VIMs       <- vims
+kle3$Other      <- othr
+kle3$'CTX-M-15' <- ctxm
+
+write.table(kle3,file='heatmap_data.csv',sep=',',quote=F,row.names=F)
+
+# Curate heatmap_data.csv manually
+
+write.table(tab3,file='country_date.csv',sep=',',quote=F,row.names=F)
+
+# Curate country_date.csv manually
+
+meta <- read.table('country_date.csv',sep=',',header=T,colClasses='character')
+
+sort(table(meta$Geographic.Location))
+
+#    South America Caribbean Islands           Oceania           Unknown 
+#                3                 4                 4                 6 
+#           Africa     North America              Asia            Europe 
+#               13                75               181               192 
+
+geocol <- c('blue','palegreen','magenta','pink','orange','deepskyblue2','red','grey')
+hmpcol <- c("white","grey","blue","darkgreen","green","brown","tan","red","orange","magenta","pink","purple","seagreen3","skyblue3","blue","firebrick4")
+
+v <- plotTree(tree='st15_final_tree.tre',
+			  infoFile='country_date.csv',
+			  tip.colour.cex=2,
+			  colourNodesBy='Geographic.Location',
+			  tipColours=geocol,
+			  treeWidth=6,
+			  ladderise='descending',
+			  heatmapData='heatmap_data2.csv',
+			  heatmap.colours=hmpcol,
+			  dataWidth=5,
+			  infoCols=NA,
+			  colLabelCex=1,
+			  legend.pos='bottomleft',
+			  outputPNG='tree_amr.png')
+
+# Analyze KL112 from Europe + UY
+
+dt  <- read.table('country_date.csv',sep=',',colClasses='character',header=T)
+hm  <- read.table('heatmap_data.csv',sep=',',colClasses='character',header=T)
+mrg <- merge(dt,hm,by.x='Genome.ID',by.y='strain')
+
+eur <- mrg[which(mrg$Geographic.Location=='Europe' & mrg$K_locus=='KL112'),]
+
+write.table(eur,file='Eur_K112.csv',sep=',',quote=F,row.names=F)
+
+
+# Run Abricate (plasmidfinder) for plasmid replicon identification
+
+setwd('./fnas_EurK112')
+
+fnas <- list.files(pattern='.fna')
+system('conda activate abricate')
+
+resu <- NULL
+
+for (f in fnas) {
+
+	sn   <- gsub('.fna','',f)
+	o1   <- gsub('.fna','.plasmids',f)
+	o2   <- gsub('.fna','.card',f)
+#	cmd1 <- paste0('abricate --db plasmidfinder ',f,' > ',o1)
+#	cmd2 <- paste0('abricate --db card ',f,' > ',o2)
+
+#	system(cmd1)
+#	system(cmd2)
+
+	ctx <- read.csv(o2,sep='\t',header=F)
+	grp <- grep('CTX-M-15',ctx$V6)
+
+	if (length(grp)>0) {
+
+		ctg <- unique(as.vector(ctx[grp,2]))
+		pls <- read.csv(o1,sep='\t',header=F)
+		wc  <- which(pls[,2]==ctg)
+
+		if (length(wc)>0) {
+
+			pl   <- as.vector(pls[wc,6])
+			resu <- rbind(resu,c(sn,pl))
+
+		} else {
+
+			resu <- rbind(resu,c(sn,'Undetermined'))
+		}
+
+	} else {
+
+		resu <- rbind(resu,c(sn,'No CTX-M-15'))
+	}
+}
+
+colnames(resu) <- c('strain','CTX-M-15 plasmid')
+resu <- as.data.frame(resu)
+
+
+# Record which genome has IncR_1
+
+incr1 <- NULL
+
+for (f in fnas) {
+
+	sn   <- gsub('.fna','',f)
+	o1   <- gsub('.fna','.plasmids',f)
+	pls  <- read.csv(o1,sep='\t',header=T,comment.char='@',check.names=F)
+	pls2 <- pls[which(pls[,10]>=85 & pls[,11]>=85),]
+	incr <- grep('IncR_1',pls2[,6])
+
+	if (length(incr)>0) {
+
+		incr1 <- rbind(incr1,c(sn,'1'))
+
+	} else {
+
+		incr1 <- rbind(incr1,c(sn,'0'))
+	}
+}
+
+colnames(incr1) <- c('strain','IncR_1')
+incr1 <- as.data.frame(incr1)
+
+
+
+
+pls     <- read.table('all_plasmids.tab',sep='\t',header=T,check.names=F)
+pls[,1] <- gsub('.plasmids','',pls[,1])
+pls     <- pls[,-2]
+pls2    <- apply(pls,2,nchar)[,-1]
+pls2[which(pls2==1)] <- 0
+pls2[which(pls2>0)]  <- 1
+
+# Format dates to DD-MM-YY and remove those with no date info
+
+eur <- read.table('Eur_K112.csv',sep=',',header=T,colClasses='character')
+
+library(ape)
+library(Biostrings)
+library(lubridate)
+library(BactDating)
+library(coda)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(scales)
+
+t   <- read.tree('dataset_to_date/clean.core_display.tre')
+aln <- readDNAStringSet('dataset_to_date/clean.core.aln')
+L   <- width(aln)[1]
+
+t$edge.length <- t$edge.length*L
+
+d <- decimal_date(dmy(eur$Collection.Date))
+d <- c(d,2019.75)
+n <- length(d)
+
+names(d) <- c(as.vector(eur$Genome.ID),'OXA48UY')
+
+rooted <- initRoot(t,d)
+r      <- roottotip(rooted,d)
+
+ld        <- leafDates(rooted)
+names(ld) <- rooted$tip.label
+fr2       <- c()
+fco       <- c()
+
+for (x in 1:10000) {
+
+	ds <- sample(d,n,replace=F)
+	li  <- lm(ld~ds)
+	sm  <- summary(li)
+	fr2 <- c(fr2,sm$r.squared)
+	fco <- c(fco,cor(ds,ld,use="complete.obs"))
+}
+
+mld <- ld[match(names(d),names(ld))]
+
+real.cor <- cor(d,mld,use='complete.obs')
+real.lm  <- lm(d~mld)
+real.sm  <- summary(real.lm)
+
+den1 <- ggplot(as.data.frame(fco),aes(x=fco)) + 
+		geom_density(color='white',fill='lightblue') + 
+		geom_vline(aes(xintercept=real.cor),color='blue',linetype='dashed',size=1) +
+		theme_bw(base_size=15) + 
+        theme(axis.title.x=element_text(size=12), 
+        	  axis.title.y=element_text(size=12), 
+		  	  axis.text=element_text(size=12,colour='grey'),
+		  	  axis.ticks=element_line(colour='grey'),
+		  	  axis.ticks.length=unit(.2, "cm"),
+		  	  panel.border=element_rect(colour='grey')) +
+        scale_y_continuous(name='Density',limits=c(0,4)) +
+		scale_x_continuous(name="Correlation",limits=c(-0.5,1))
+
+den2 <- ggplot(as.data.frame(fr2),aes(x=fr2)) + 
+		geom_density(color='white',fill='lightblue') + 
+		geom_vline(aes(xintercept=real.sm$r.squared),color='blue',linetype='dashed',size=1) +
+		theme_bw(base_size=15) + 
+        theme(axis.title.x=element_text(size=12), 
+        	  axis.title.y=element_text(size=12), 
+		  	  axis.text=element_text(size=12,colour='grey'),
+		  	  axis.ticks=element_line(colour='grey'),
+		  	  axis.ticks.length=unit(.2, "cm"),
+		  	  panel.border=element_rect(colour='grey')) +
+        scale_y_continuous(name='Density',limits=c(0,3)) +
+		scale_x_continuous(name="R squared",limits=c(0,1))
+
+pdf('temp_signal_permut.pdf')
+
+ggarrange(den1,den2,align='hv',labels=c('A','B'),ncol=2,nrow=2)
+
+dev.off()
+
+res  <- bactdate(rooted,d,nbIts=5e6)
+
+saveRDS(res,file='dataset_to_date/result_bactdating.rds')
+
+mcmc <- as.mcmc.resBactDating(res)
+eff  <- effectiveSize(mcmc)
+
+cis2      <- res2$CI
+#cis[79,1] <- 1980
+res2$CI   <- cis2
+tre2      <- res2$tree
+res2$tree <- ape::rotate(tre2,88)
+
+td <- as.treedata.resBactDating(res)
+od <- methods::new('treedata',phylo=td[[1]],data=dplyr::tbl_df(as.data.frame(td[[2]])))
+g  <- ggtree(od, mrsd='2019-07-01')
+
+uy   <- c('OXA48UY','01/9/19','Uruguay','South America','ybt 13; ICEKp2','KL112','1','0','0','0','0','1')
+meta <- rbind(eur,uy)
+tbl  <- table(meta$Isolation.Country)
+oth  <- names(which(tbl<5))[-9]
+tcol <- as.vector(meta$Isolation.Country)
+
+tcol[which(tcol%in%oth)] <- 'Other'
+meta$tipcol              <- tcol 
+manual.colors            <- c('darkgreen','maroon','grey','goldenrod4','orange','purple2','red')
+
+# Add YbST info to metadata
+ybst <- kle[,c(1,7)]
+meta <- merge(ybst,meta,by.y='Genome.ID',by.x='strain')
+
+
+g2 <- g + 
+	  geom_range(range='length_0.95_HPD',color='lightblue',alpha=.4,size=2) + 
+	  theme_tree2() +
+	  theme(panel.grid.major.x = element_line(color='grey',size=.4))
+
+g3 <- g2 %<+% meta + 
+	  geom_tippoint(aes(color=tipcol),size=2) +
+	  scale_color_manual(values=manual.colors,name='Country')
+
+g4 <- gheatmap(g3,hmp,width=.2,colnames=F)
+
+df           <- as.data.frame(cbind(d,mld))
+colnames(df) <- c('Date','RTTD')
+
+df$Country <- meta[,13]
+
+l1 <- ggplot(df,aes(x=Date,y=RTTD,colour=Country)) + 
+	  geom_point(size=2) +
+	  scale_color_manual(values=manual.colors) +
+	  theme_bw(base_size=15) +
+	  labs(y='Root-to-tip distance',x='Year of isolation') + 
+	  theme(legend.position='none',
+	  		axis.title=element_text(size=10),
+	  		axis.text=element_text(size=9))
+
+l2 <- l1 + stat_smooth(method='lm',col='black',size=.3,alpha=.2,fill='palegreen')
+
+pdf.h <- 10/cm(1) # 10 cm to inches
+pdf.w <- 20/cm(1) # 20 cm to inches
+
+pdf(file='Figure2_v2.pdf',height=pdf.h,width=pdf.w)
+
+ggarrange(l2,g4,align='hv',labels=c('A','B'),ncol=2,widths=c(1,1.5),nrow=1)
+
+dev.off()
+
+
+restip    <- res$tree$tip.label
+gmids     <- as.vector(eur$Genome.ID)
+gmids     <- c(gmids,'OXA48UY')
+rescol    <- eur$Isolation.Country[match(restip,gmids)]
+rescol[7] <- 'Uruguay'
+other     <- c('Slovakia',
+			   'Switzerland',
+			   'Romania',
+			   'Belgium',
+			   'France',
+			   'Italy',
+			   'Netherlands',
+			   'Germany')
+
+rescol[which(rescol%in%other)]          <- 'grey'
+rescol[which(rescol=='Hungary')]        <- 'maroon'
+rescol[which(rescol=='Croatia')]        <- 'blue'
+rescol[which(rescol=='Uruguay')]        <- 'red'
+rescol[which(rescol=='Spain')]          <- 'orange'
+rescol[which(rescol=='Portugal')]       <- 'pink'
+rescol[which(rescol=='United Kingdom')] <- 'purple2'
+
+plot(res,'treeCI',show.tip.label=F,tip.color=rescol)
+
+
+ess <- as.vector(eur[,1])
+
+saveRDS(ess,file='Eur_K112.rds')
+cat(ess,file='Eur_K112.txt',sep='\n')
+
+# /lustre/scratch118/infgen/team162/gi1/klebsiella_public
+
+ess <- as.vector(read.table('Eur_K112.txt',sep='\n',header=F,,colClasses='character')$V1)
+
+system(paste('snippy-core',paste(paste0('../snps_',as.character(ess)),collapse=' ')))
+system("sed 's/snps_//g' core.full.aln > aux; mv aux core.full.aln")
+system('snippy_clean_full_aln core.full.aln > clean.full.aln')
+system('run_gubbins.py --tree_builder fasttree --threads 10 -p gubbins clean.full.aln')
+system('snp-sites -c clean.full.aln > clean.full.tre')
+system('FastTree -gtr -nt clean.full.aln > clean.full.tre')
+
+tre2 <- read.tree('Eur_K112.tre')
+tip2 <- tre2$tip.label
+dt2  <- dt[which(dt$Genome.ID%in%tip2),]
+
+
+country_color <- rep('Other',dim(dt2)[1])
+
+country_color[which(dt2$Isolation.Country=='Hungary')]        <- 'Hungary'
+country_color[which(dt2$Isolation.Country=='Spain')]          <- 'Spain'
+country_color[which(dt2$Isolation.Country=='United Kingdom')] <- 'United Kingdom'
+country_color[which(dt2$Isolation.Country=='Portugal')]       <- 'Portugal'
+country_color[which(dt2$Isolation.Country=='Croatia')]        <- 'Croatia'
+country_color[which(dt2$Isolation.Country=='Uruguay')]        <- 'Uruguay'
+
+dt2$country_color <- country_color
+
+write.table(dt,file='dt2.csv',sep=',',quote=F,row.names=F)
+
+ctycol <- c('blue','maroon','grey','pink','orange','purple2','red')
+
+f <- plotTree(tree='Eur_K112.tre',
+   			  infoFile='dt2.csv',
+			  tip.colour.cex=2,
+			  colourNodesBy='country_color',
+			  tipColours=ctycol,
+			  treeWidth=5,
+			  ladderise='descending',
+			  heatmapData='heatmap_panmatrix.csv',
+	#		  heatmap.colours='black',
+			  dataWidth=5,
+			  infoCols=NA,
+			  colLabelCex=1,
+			  legend.pos='bottomleft')
+	#		  outputPNG='tree_amr.png')
+
+
+# Pangenome
+
+system('mkdir gffs')
+setwd('gffs')
+system('ln -s ../prokka*/*.gff .')
+
+klebs <- list.files(pattern='.gff')
+
+library(pewit)
+
+pg <- pangenome(gffs=klebs,
+				hmm_pfam='/mnt/4tb1/software/pfam/Pfam-A.hmm',
+				dat_pfam='/mnt/4tb1/software/pfam/Pfam-A.hmm.dat',
+				minhash_split=TRUE,
+				n_threads=4)
+
+saveRDS(pg,file='Euk_KL112_pg.rds')
+
+panm  <- pg$pan_matrix
+psum  <- apply(panm,2,sum)
+panm2 <- panm[,-which(psum>=80 | psum==1)]
+
+panm3 <- cbind(rownames(panm2),panm2)
+
+colnames(panm3) <- c('strain',colnames(panm3)[-1])
+rownames(panm3) <- NULL
+
+panm3 <- as.data.frame(panm3)
+
+system(paste('cp',paste(paste0('../fnas_ST15/',ess,'.fna'),collapse=' '),'.'))
+
+# EuSCAPE same hospital (PathogenWatch)
+
+euscape      <- read.table('euscape_outbreaks.csv',sep=',',header=T,colClasses='character')
+euscape.ids  <- as.vector(euscape$Genome.ID)
+gffs         <- list.files(pattern='gff')
+euscape.gffs <- c(gffs[which(gsub('.gff','',gffs)%in%euscape.ids)],'OXA48UY.gff')
+
+euscape.pg <- pangenome(gffs=euscape.gffs,
+						hmm_pfam='/mnt/4tb1/software/pfam/Pfam-A.hmm',
+						dat_pfam='/mnt/4tb1/software/pfam/Pfam-A.hmm.dat',
+						minhash_split=TRUE,
+						n_threads=2)
+
+euscape2 <- euscape
+cols     <- colnames(euscape)
+cols[1] <- 'org'
+colnames(euscape2) <- cols
+
+son <- as.vector(euscape.pg$organisms$org)[-28]
+euscape4<-euscape3[-which(euscape3$org=='573.22018'),]
+
+euscape.pg$add_metadata(euscape3)
+
+pca    <- euscape.pg$gg_pca(colour='Country', size=4) +                     # Plot PCA using gene presence/absence data
+          theme_bw(base_size=15) +
+          theme(legend.position='bottomright') +
+          theme(axis.title=element_text(size=12),                # Customize axis label size                    #
+		  		axis.text=element_text(size=12))   
+
+spain.hsp.134 <- as.vector(euscape[which(euscape[,3]=='Spain'),1])
+croat.hsp.54  <- as.vector(euscape[which(euscape[,3]=='Croatia'),1])
+hung.hsp.189  <- as.vector(euscape[which(euscape[,4]=='189'),1])
+hung.hsp.27   <- as.vector(euscape[which(euscape[,4]=='27'),1])
+
+spain.pmat.134 <- panm[which(rownames(panm)%in%spain.hsp.134),]
+croat.pmat.54  <- panm[which(rownames(panm)%in%croat.hsp.54),]
+hung.pmat.189  <- panm[which(rownames(panm)%in%hung.hsp.189),]
+hung.pmat.27   <- panm[which(rownames(panm)%in%hung.hsp.27),]
+uy.spain.pmat  <- rbind(spain.pmat.134,panm[which(rownames(panm)=='OXA48UY'),])
+
+rownames(uy.spain.pmat) <- c(rownames(spain.pmat.134),'OXA48UY')
+
+spain.dist.134 <- as.vector(log(vegdist(spain.pmat.134,method='jaccard')))
+croat.dist.54  <- as.vector(log(vegdist(croat.pmat.54,method='jaccard')))
+hung.dist.189  <- as.vector(log(vegdist(hung.pmat.189,method='jaccard')))
+hung.dist.27   <- as.vector(log(vegdist(hung.pmat.27,method='jaccard')))
+uy.spain.dist  <- as.vector(log(as.matrix(vegdist(uy.spain.pmat,method='jaccard'))[6,-6]))
+
+combi_data     <- c(rep('Spain.134',length(spain.dist.134)),
+					rep('Croatia.54',length(croat.dist.54)),
+					rep('Hungary.189',length(hung.dist.189)),
+					rep('Hungary.27',length(hung.dist.27)),
+					rep('Uy.Spain',length(uy.spain.dist))
+					) 
+
+combi_dist     <- data.frame(dataset=combi_data,
+                     		 value=c(spain.dist.134,croat.dist.54,
+                     		 		 hung.dist.189,hung.dist.27,uy.spain.dist)
+                     		)
+
+unique_episodes <- combi_dist %>% group_by(dataset) %>% count(dataset)
+data2           <- merge(x = combi_dist, y = unique_episodes, by = "dataset", all.x = TRUE)
+combi_dens      <- ggplot(combi_dist,aes(x=value,,y=(..count..)/n*1000, fill=dataset)) +
+  				   geom_density(bw =1,alpha=0.4,size=1) + xlim(c(-10,1))
+
+
+
+
+
+
+# Figure 3 - Transmission of clade SP-UY
+
+# /mnt/4tb1/11_Vero/OXA48/dataset_to_date
+
+system('mkdir spuy_transmission')
+setwd('spuy_transmission')
+
+library(ape)
+library(Biostrings)
+library(lubridate)
+library(BactDating)
+library(coda)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(scales)
+
+aln  <- readDNAStringSet('../clean.core.aln')
+nms  <- names(aln)
+spuy <- c('OXA48UY',readLines('../../spain.txt'))
+aln2 <- aln[which(nms%in%spuy)]
+
+writeXStringSet(aln2,file='spuy_alignment.fasta')
+
+system('fasttree -nt -gtr spuy_alignment.fasta > spuy_alignment.tre')
+
+t2   <- read.tree('spuy_alignment.tre')
+aln2 <- readDNAStringSet('spuy_alignment.fasta')
+L2   <- width(aln2)[1]
+
+t2$edge.length <- t2$edge.length*L2
+
+
+spuy.dates <- c('2019-09-01','2013-11-28','2013-11-04','2013-12-10','2013-11-04',
+				'2013-11-16','2013-02-20','2014-03-20','2014-03-24','2015-04-01',
+				'2014-12-01','2014-01-19','2013-12-17')
+
+names(spuy.dates) <- t2$tip.label
+
+
+d2 <- decimal_date(ymd(spuy.dates))
+n2 <- length(d2)
+
+names(d2) <- t2$tip.label
+
+r2  <- initRoot(t2,d2)
+rtt <- roottotip(r2,d2)
+
+ld2        <- leafDates(r2)
+names(ld2) <- r2$tip.label
+fr2.2      <- c()
+fco.2      <- c()
+
+for (i in 1:10000) {
+
+	ds2   <- sample(d2,n2,replace=F)
+	li2   <- lm(ld2~ds2)
+	sm2   <- summary(li2)
+	fr2.2 <- c(fr2.2,sm2$r.squared)
+	fco.2 <- c(fco.2,cor(ds2,ld2,use="complete.obs"))
+}
+
+mld2 <- ld2[match(names(d2),names(ld2))]
+
+real.cor2 <- cor(d2,mld2,use='complete.obs')
+real.lm2  <- lm(d2~mld2)
+real.sm2  <- summary(real.lm2)
+
+den3 <- ggplot(as.data.frame(fco.2),aes(x=fco.2)) + 
+		geom_density(color='white',fill='lightblue') + 
+		geom_vline(aes(xintercept=real.cor2),color='blue',linetype='dashed',size=1) +
+		theme_bw(base_size=15) + 
+        theme(axis.title.x=element_text(size=12), 
+        	  axis.title.y=element_text(size=12), 
+		  	  axis.text=element_text(size=12,colour='grey'),
+		  	  axis.ticks=element_line(colour='grey'),
+		  	  axis.ticks.length=unit(.2, "cm"),
+		  	  panel.border=element_rect(colour='grey')) +
+        scale_y_continuous(name='Density',limits=c(0,4)) +
+		scale_x_continuous(name="Correlation",limits=c(-0.5,1))
+
+den4 <- ggplot(as.data.frame(fr2.2),aes(x=fr2.2)) + 
+		geom_density(color='white',fill='lightblue') + 
+		geom_vline(aes(xintercept=real.sm2$r.squared),color='blue',linetype='dashed',size=1) +
+		theme_bw(base_size=15) + 
+        theme(axis.title.x=element_text(size=12), 
+        	  axis.title.y=element_text(size=12), 
+		  	  axis.text=element_text(size=12,colour='grey'),
+		  	  axis.ticks=element_line(colour='grey'),
+		  	  axis.ticks.length=unit(.2, "cm"),
+		  	  panel.border=element_rect(colour='grey')) +
+        scale_y_continuous(name='Density',limits=c(0,3)) +
+		scale_x_continuous(name="R squared",limits=c(0,1))
+
+pdf('temp_signal_permut_spuy.pdf')
+
+ggarrange(den3,den4,align='hv',labels=c('A','B'),ncol=2,nrow=2)
+
+dev.off()
+
+res2  <- bactdate(r2,d2,nbIts=5e6)
+
+saveRDS(res,file='dataset_to_date/result_bactdating.rds')
+
+mcmc2 <- as.mcmc.resBactDating(res2)
+eff2  <- effectiveSize(mcmc2)
+
+cis       <- res$CI
+cis[79,1] <- 1980
+res$CI    <- cis
+tre1      <- res$tree
+res$tree  <- ape::rotate(tre1,88)
+
+td2 <- as.treedata.resBactDating(res2)
+od2 <- methods::new('treedata',phylo=td2[[1]],data=dplyr::tbl_df(as.data.frame(td2[[2]])))
+g2  <- ggtree(od2, mrsd='2019-09-01')
+
+g3 <- g2 + 
+	  geom_range(range='length_0.95_HPD',color='lightblue',alpha=.4,size=2) + 
+	  theme_tree2() +
+	  theme(panel.grid.major.x = element_line(color='grey',size=.4))
+
+# /mnt/4tb1/11_Vero/OXA48/fnas_EurK112
+
+library(Biostrings)
+
+system('mkdir ompK')
+setwd('ompK')
+
+dirs <- list.dirs('..')
+dirs <- dirs[grep('prokka_',dirs)]
+
+system('touch ompK35_all.fasta')
+
+for (d in 1:length(dirs)) {
+
+	sa <- gsub('../prokka_','',dirs[d])
+	fa <- readAAStringSet(paste0(dirs[d],'/',sa,'.faa'))
+	po <- fa[grep('Outer membrane protein YedS',names(fa))]
+
+	writeXStringSet(po[1],file='ompK35_all.fasta',append=T)
+}
+
+system('touch ompK36_all.fasta')
+
+for (d in 1:length(dirs)) {
+
+	sa <- gsub('../prokka_','',dirs[d])
+	fa <- readAAStringSet(paste0(dirs[d],'/',sa,'.faa'))
+	po <- fa[grep('Outer membrane porin C',names(fa))]
+
+	writeXStringSet(po[1],file='ompK36_all.fasta',append=T)
+}
